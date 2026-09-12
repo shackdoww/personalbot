@@ -1,0 +1,15 @@
+[Unit]
+Description=PersonalBot Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser/personalbot
+EnvironmentFile=/home/azureuser/personalbot/.env
+ExecStart=/home/azureuser/personalbot/venv/bin/python /home/azureuser/personalbot/bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
