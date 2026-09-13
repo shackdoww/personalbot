@@ -10,6 +10,7 @@ YTDL_OPTIONS = {
     "quiet": True,
     "no_warnings": True,
     "default_search": "ytsearch1",
+    "source_address": "0.0.0.0",
 }
 
 FFMPEG_OPTIONS = {
@@ -23,7 +24,6 @@ class GuildPlayer:
         self.queue = []
         self.current = None
         self.voice = None
-        self.play_lock = asyncio.Lock()
 
 
 class Music(commands.Cog):
@@ -39,7 +39,10 @@ class Music(commands.Cog):
 
     async def extract(self, query):
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: self.ytdl.extract_info(query, download=False))
+        return await loop.run_in_executor(
+            None,
+            lambda: self.ytdl.extract_info(query, download=False),
+        )
 
     async def start_next(self, guild):
         player = self.get_player(guild.id)
@@ -85,24 +88,47 @@ class Music(commands.Cog):
         player = await self.ensure_voice(interaction)
         if not player:
             return
+
         try:
             info = await self.extract(query)
+            if not info:
+                raise RuntimeError("No result found")
             if "entries" in info:
-                info = info["entries"][0]
+                entries = [entry for entry in info["entries"] if entry]
+                if not entries:
+                    raise RuntimeError("No result found")
+                info = entries[0]
+
+            stream_url = info.get("url")
+            if not stream_url:
+                raise RuntimeError("No audio stream found")
+
             track = {
                 "title": info.get("title", "Unknown title"),
-                "url": info["url"],
+                "url": stream_url,
                 "webpage": info.get("webpage_url", query),
             }
             player.queue.append(track)
             position = len(player.queue)
             await self.start_next(interaction.guild)
+
             if player.current == track:
                 await interaction.followup.send(f"🎵 Now playing **{track['title']}**")
             else:
-                await interaction.followup.send(f"🎵 Added **{track['title']}** to the queue at position {position}.")
+                await interaction.followup.send(
+                    f"🎵 Added **{track['title']}** to the queue at position {position}."
+                )
+        except yt_dlp.utils.DownloadError as exc:
+            print(f"yt-dlp error: {exc}")
+            await interaction.followup.send(
+                "❌ YouTube blocked the music request from the Azure server. "
+                "The music relay needs to be configured."
+            )
         except Exception as exc:
-            await interaction.followup.send(f"Could not play that: `{type(exc).__name__}`")
+            print(f"Music error: {type(exc).__name__}: {exc}")
+            await interaction.followup.send(
+                f"❌ Could not play that: `{type(exc).__name__}`"
+            )
 
     @app_commands.command(name="pause", description="Pause the current song.")
     async def pause(self, interaction: discord.Interaction):
