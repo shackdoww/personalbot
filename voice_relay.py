@@ -6,23 +6,23 @@ import time
 import edge_tts
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
-from google import genai
-from google.genai import types
+from groq import Groq
 
 load_dotenv()
 
-API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+API_KEY = os.getenv("GROQ_API_KEY")
+LLM_MODEL = os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-20b")
+STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 RELAY_SECRET = os.getenv("RELAY_SECRET")
 TTS_VOICE = os.getenv("TTS_VOICE", "en-US-GuyNeural")
 
 if not API_KEY:
-    raise RuntimeError("GEMINI_API_KEY is not set")
+    raise RuntimeError("GROQ_API_KEY is not set")
 
 if not RELAY_SECRET:
     raise RuntimeError("RELAY_SECRET is not set")
 
-client = genai.Client(api_key=API_KEY)
+client = Groq(api_key=API_KEY)
 app = FastAPI()
 
 SYSTEM_PROMPT = """You are Itot, a conversational Discord voice assistant.
@@ -31,8 +31,48 @@ Do not use markdown, bullet lists, emojis, or stage directions.
 Sound like a real person having a casual conversation.
 Keep normal answers to one or two short sentences unless more detail is necessary.
 If the user asks a simple question, answer directly.
-If the audio contains no understandable speech, return an empty response.
 """
+
+
+async def transcribe_audio(audio_bytes):
+    start = time.perf_counter()
+
+    transcription = await asyncio.to_thread(
+        client.audio.transcriptions.create,
+        file=("voice.wav", audio_bytes),
+        model=STT_MODEL,
+        language="en",
+        response_format="text",
+        temperature=0.0,
+    )
+
+    text = getattr(transcription, "text", transcription)
+    text = (text or "").strip()
+
+    print(f"Groq STT: {time.perf_counter() - start:.2f}s")
+    return text
+
+
+async def generate_response(text, user_name):
+    start = time.perf_counter()
+
+    response = await asyncio.to_thread(
+        client.chat.completions.create,
+        model=LLM_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": f"The speaker is named {user_name}. They said: {text}",
+            },
+        ],
+        max_completion_tokens=120,
+        temperature=0.7,
+    )
+
+    answer = (response.choices[0].message.content or "").strip()
+    print(f"Groq LLM: {time.perf_counter() - start:.2f}s")
+    return answer
 
 
 async def make_tts(text):
@@ -71,30 +111,15 @@ async def voice(
         raise HTTPException(status_code=400, detail="Empty audio")
 
     try:
-        gemini_start = time.perf_counter()
+        transcript = await transcribe_audio(audio_bytes)
 
-        audio_part = types.Part.from_bytes(
-            data=audio_bytes,
-            mime_type="audio/wav",
-        )
+        if not transcript:
+            print(f"Voice request total: {time.perf_counter() - request_start:.2f}s")
+            return {"response": "", "audio": ""}
 
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model=MODEL,
-            contents=[
-                SYSTEM_PROMPT,
-                f"The speaker is named {user_name}.",
-                audio_part,
-                "Transcribe what the speaker said and respond to it.",
-            ],
-            config=types.GenerateContentConfig(
-                max_output_tokens=120,
-            ),
-        )
+        print(f"Voice STT [{user_name}]: {transcript}")
 
-        print(f"Gemini: {time.perf_counter() - gemini_start:.2f}s")
-
-        text = (response.text or "").strip()
+        text = await generate_response(transcript, user_name)
 
         if not text:
             print(f"Voice request total: {time.perf_counter() - request_start:.2f}s")
@@ -110,6 +135,14 @@ async def voice(
         }
 
     except Exception as exc:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 429:
+            print("Groq rate limit or quota reached")
+            raise HTTPException(
+                status_code=429,
+                detail="Groq rate limit or free-tier quota reached. Try again later.",
+            )
+
         print(f"Voice relay error: {type(exc).__name__}: {exc}")
         raise HTTPException(
             status_code=500,
