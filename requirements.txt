@@ -3,3 +3,5 @@ python-dotenv
 google-genai
 httpx
 yt-dlp
+davey>=0.1.4
+discord-ext-voice-recv-dave @ git+https://github.com/jstewart0788/discord-ext-voice-recv-dave.git@78fcb434a3484f2abf54cf89e80e86b651e5c28d
