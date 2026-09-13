@@ -64,9 +64,7 @@ class VoiceAI(commands.Cog):
             response = await client.post(
                 self.relay_url,
                 headers=headers,
-                files={
-                    "audio": ("voice.wav", wav_data, "audio/wav"),
-                },
+                files={"audio": ("voice.wav", wav_data, "audio/wav")},
                 data={"user_name": member.display_name},
             )
             response.raise_for_status()
@@ -157,9 +155,10 @@ class VoiceAI(commands.Cog):
         if task and not task.done():
             task.cancel()
 
-        session.flush_tasks[user.id] = asyncio.run_coroutine_threadsafe(
+        future = asyncio.run_coroutine_threadsafe(
             self.flush_later(guild, user), self.bot.loop
-        ).result(timeout=0.01) if False else asyncio.create_task(self.flush_later(guild, user))
+        )
+        session.flush_tasks[user.id] = future
 
     async def start_voice(self, guild, channel):
         current = guild.voice_client
@@ -170,9 +169,12 @@ class VoiceAI(commands.Cog):
         else:
             voice = await channel.connect(cls=voice_recv.VoiceRecvClient)
 
-        session = self.get_session(guild.id)
         voice.stop_listening()
-        voice.listen(voice_recv.BasicSink(lambda user, data: self.receive_callback(guild, user, data)))
+        voice.listen(
+            voice_recv.BasicSink(
+                lambda user, data: self.receive_callback(guild, user, data)
+            )
+        )
         return voice
 
     @app_commands.command(name="talk", description="Join your voice channel and start the AI voice assistant.")
