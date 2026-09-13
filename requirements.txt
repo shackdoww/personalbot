@@ -1,6 +1,7 @@
 discord.py[voice]
 python-dotenv
 google-genai
+groq
 httpx
 yt-dlp
 fastapi
