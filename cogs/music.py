@@ -1,22 +1,13 @@
 import asyncio
+import os
+from urllib.parse import quote
+
 import discord
-import yt_dlp
 from discord import app_commands
 from discord.ext import commands
 
-YTDL_OPTIONS = {
-    "format": "bestaudio/best",
-    "noplaylist": True,
-    "quiet": True,
-    "no_warnings": True,
-    "default_search": "ytsearch1",
-    "source_address": "0.0.0.0",
-}
-
-FFMPEG_OPTIONS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",
-}
+MUSIC_RELAY_URL = os.getenv("MUSIC_RELAY_URL")
+RELAY_SECRET = os.getenv("RELAY_SECRET")
 
 
 class GuildPlayer:
@@ -30,19 +21,16 @@ class Music(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.players = {}
-        self.ytdl = yt_dlp.YoutubeDL(YTDL_OPTIONS)
 
     def get_player(self, guild_id):
         if guild_id not in self.players:
             self.players[guild_id] = GuildPlayer()
         return self.players[guild_id]
 
-    async def extract(self, query):
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None,
-            lambda: self.ytdl.extract_info(query, download=False),
-        )
+    def stream_url(self, query):
+        if not MUSIC_RELAY_URL or not RELAY_SECRET:
+            return None
+        return f"{MUSIC_RELAY_URL}?query={quote(query, safe='')}"
 
     async def start_next(self, guild):
         player = self.get_player(guild.id)
@@ -55,7 +43,14 @@ class Music(commands.Cog):
             return
 
         player.current = player.queue.pop(0)
-        source = discord.FFmpegPCMAudio(player.current["url"], **FFMPEG_OPTIONS)
+        ffmpeg_options = {
+            "before_options": (
+                "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
+                f"-headers \"X-Relay-Secret: {RELAY_SECRET}\\r\\n\""
+            ),
+            "options": "-vn",
+        }
+        source = discord.FFmpegPCMAudio(player.current["url"], **ffmpeg_options)
 
         def after_play(error):
             if error:
@@ -89,46 +84,24 @@ class Music(commands.Cog):
         if not player:
             return
 
-        try:
-            info = await self.extract(query)
-            if not info:
-                raise RuntimeError("No result found")
-            if "entries" in info:
-                entries = [entry for entry in info["entries"] if entry]
-                if not entries:
-                    raise RuntimeError("No result found")
-                info = entries[0]
+        if not MUSIC_RELAY_URL or not RELAY_SECRET:
+            await interaction.followup.send("❌ Music relay is not configured on the bot.")
+            return
 
-            stream_url = info.get("url")
-            if not stream_url:
-                raise RuntimeError("No audio stream found")
+        stream_url = self.stream_url(query)
+        track = {
+            "title": query,
+            "url": stream_url,
+            "webpage": query,
+        }
+        player.queue.append(track)
+        position = len(player.queue)
+        await self.start_next(interaction.guild)
 
-            track = {
-                "title": info.get("title", "Unknown title"),
-                "url": stream_url,
-                "webpage": info.get("webpage_url", query),
-            }
-            player.queue.append(track)
-            position = len(player.queue)
-            await self.start_next(interaction.guild)
-
-            if player.current == track:
-                await interaction.followup.send(f"🎵 Now playing **{track['title']}**")
-            else:
-                await interaction.followup.send(
-                    f"🎵 Added **{track['title']}** to the queue at position {position}."
-                )
-        except yt_dlp.utils.DownloadError as exc:
-            print(f"yt-dlp error: {exc}")
-            await interaction.followup.send(
-                "❌ YouTube blocked the music request from the Azure server. "
-                "The music relay needs to be configured."
-            )
-        except Exception as exc:
-            print(f"Music error: {type(exc).__name__}: {exc}")
-            await interaction.followup.send(
-                f"❌ Could not play that: `{type(exc).__name__}`"
-            )
+        if player.current == track:
+            await interaction.followup.send(f"🎵 Now playing **{query}**")
+        else:
+            await interaction.followup.send(f"🎵 Added **{query}** to the queue at position {position}.")
 
     @app_commands.command(name="pause", description="Pause the current song.")
     async def pause(self, interaction: discord.Interaction):
