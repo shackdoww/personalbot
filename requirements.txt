@@ -1,4 +1,5 @@
 discord.py[voice]
 python-dotenv
 google-genai
+httpx
 yt-dlp
