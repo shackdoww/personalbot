@@ -17,7 +17,7 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 @bot.event
 async def on_ready():
-    for extension in ("cogs.general", "cogs.fun", "cogs.ai", "cogs.music"):
+    for extension in ("cogs.general", "cogs.fun", "cogs.ai", "cogs.music", "cogs.voice_ai"):
         try:
             await bot.load_extension(extension)
         except commands.ExtensionAlreadyLoaded:
@@ -31,6 +31,7 @@ async def on_ready():
 async def help_command(ctx):
     embed = discord.Embed(title="PersonalBot", description="AI, music, and fun commands.")
     embed.add_field(name="AI", value="`/ask` or `!ask`", inline=False)
+    embed.add_field(name="Voice AI", value="`/talk` or `!talk` · `/shutup` or `!shutup`", inline=False)
     embed.add_field(name="Music", value="`/play`, `/pause`, `/resume`, `/skip`, `/stop`, `/queue`, `/nowplaying`", inline=False)
     embed.add_field(name="Fun", value="`/8ball`, `/coinflip`, `/roll`, `/choose`, `/ship`, `/joke`", inline=False)
     await ctx.send(embed=embed)
