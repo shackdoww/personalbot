@@ -16,13 +16,30 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 
 @bot.event
-async def on_ready():
-    for extension in ("cogs.general", "cogs.fun", "cogs.ai", "cogs.music", "cogs.voice_ai"):
+async def setup_hook():
+    extensions = (
+        "cogs.general",
+        "cogs.fun",
+        "cogs.ai",
+        "cogs.music",
+        "cogs.voice_ai",
+    )
+
+    for extension in extensions:
         try:
             await bot.load_extension(extension)
+            print(f"Loaded {extension}")
         except commands.ExtensionAlreadyLoaded:
             pass
-    await bot.tree.sync()
+        except Exception as exc:
+            print(f"Failed to load {extension}: {type(exc).__name__}: {exc}")
+
+    synced = await bot.tree.sync()
+    print(f"Synced {len(synced)} slash command(s)")
+
+
+@bot.event
+async def on_ready():
     print(f"Logged in as {bot.user} ({bot.user.id})")
     print(f"Connected to {len(bot.guilds)} server(s)")
 
