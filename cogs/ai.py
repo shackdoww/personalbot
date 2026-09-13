@@ -1,37 +1,45 @@
 import os
+
 import discord
+import httpx
 from discord import app_commands
 from discord.ext import commands
-from google import genai
 
 
 class AI(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        api_key = os.getenv("GEMINI_API_KEY")
-        self.client = genai.Client(api_key=api_key) if api_key else None
-        self.model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        self.relay_url = os.getenv("AI_RELAY_URL")
+        self.relay_secret = os.getenv("RELAY_SECRET")
 
     async def ask_ai(self, prompt: str) -> str:
-        if not self.client:
-            return "The AI assistant is not configured yet. Set `GEMINI_API_KEY` in `.env`."
+        if not self.relay_url or not self.relay_secret:
+            return "The AI relay is not configured yet."
 
-        response = await self.bot.loop.run_in_executor(
-            None,
-            lambda: self.client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-            ),
-        )
-        return response.text or "I couldn't generate a response."
+        async with httpx.AsyncClient(timeout=90) as client:
+            response = await client.post(
+                self.relay_url,
+                headers={"X-Relay-Secret": self.relay_secret},
+                json={"prompt": prompt},
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("response", "") or "I couldn't generate a response."
 
-    @app_commands.command(name="ask", description="Ask the Gemini AI assistant something.")
+    async def send_response(self, send, answer: str):
+        if not answer:
+            answer = "I couldn't generate a response."
+
+        for i in range(0, len(answer), 2000):
+            await send(answer[i:i + 2000])
+
+    @app_commands.command(name="ask", description="Ask the AI assistant something.")
     @app_commands.describe(question="Your question")
     async def ask(self, interaction: discord.Interaction, question: str):
         await interaction.response.defer(thinking=True)
         try:
             answer = await self.ask_ai(question)
-            await interaction.followup.send(answer[:2000])
+            await self.send_response(interaction.followup.send, answer)
         except Exception as exc:
             await interaction.followup.send(f"AI error: `{type(exc).__name__}`")
 
@@ -40,7 +48,7 @@ class AI(commands.Cog):
         async with ctx.typing():
             try:
                 answer = await self.ask_ai(question)
-                await ctx.send(answer[:2000])
+                await self.send_response(ctx.send, answer)
             except Exception as exc:
                 await ctx.send(f"AI error: `{type(exc).__name__}`")
 
